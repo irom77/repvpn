@@ -1,7 +1,7 @@
 #!/usr/bin/python
 __author__ = 'http://blog.boa.nu/2012/10/python-threading-example-creating-pingerpy.html'
 """
-Example:
+Example of initial pinger class:
 [irekr@nms02 repvpn]$ pwd
 /home/irekr/repvpn
 [irekr@nms02 repvpn]$ python pinger.py
@@ -38,15 +38,43 @@ Type "help", "copyright", "credits" or "license" for more information.
 995
 >>> len(ping.status['dead'])
 15389
+Example of recording in MongoDB
+[irekr@nms02 repvpn]$mongo
+> use devices
+switched to db devices
+> db.repvpn.find()
+{ "_id" : ObjectId("54f4c80a05000e14a0d41b34"), "last" : ISODate("2015-03-02T15:28:58.866Z"), "address" : "127.0.1.2" }
+{ "_id" : ObjectId("54f4c80a05000e14a0d41b35"), "last" : ISODate("2015-03-02T15:28:58.882Z"), "address" : "8.8.8.8" }
+{ "_id" : ObjectId("54f4c80a05000e14a0d41b36"), "last" : ISODate("2015-03-02T15:28:58.903Z"), "address" : "google.com" }
+{ "_id" : ObjectId("54f4c80a05000e14a0d41b37"), "last" : ISODate("2015-03-02T15:28:58.917Z"), "address" : "github.com" }
+{ "_id" : ObjectId("54f4c96305000e23c998e847"), "last" : ISODate("2015-03-02T15:34:43.701Z"), "address" : "yahoo.com" }
+>>> from pinger import Pinger
+>>> print Pinger.hosts
+[]
+>>> import repvpn
+>>> Pinger.hosts = repvpn.list([])
+>>> len(Pinger.hosts)
+16384
 """
 import subprocess
 import threading
 import sys
+from datetime import datetime
+import pymongo
 
 
 class Pinger(object):
+    """
+    Class Pinger based on http://blog.boa.nu
+    status used in the initial class version, here replaced by recording in MongoDB
     status = {'alive': [], 'dead': []}  # Populated while we are running
+    """
     hosts = []  # List of all hosts/ips in our input queue
+
+    # Connect to db
+    db = pymongo.Connection()["devices"]
+    vpn = db["repvpn"]
+    vpn.ensure_index("address", unique=True)
 
     # How many ping process at the time.
     thread_count = 4
@@ -79,9 +107,13 @@ class Pinger(object):
 
             if not ip:
                 return None
-
-            result = 'alive' if self.ping(ip) else 'dead'
-            self.status[result].append(ip)
+            # status used in the initial class version
+            # result = 'alive' if self.ping(ip) else 'dead'
+            if self.ping(ip):
+                self.vpn.insert({"address": ip, 'last': datetime.now()})
+            else:
+                self.vpn.remove({"address": ip})
+            # self.status[result].append(ip)
 
     def start(self):
         threads = []
@@ -96,8 +128,8 @@ class Pinger(object):
 
         # Wait until all the threads are done. .join() is blocking.
         [t.join() for t in threads]
-
-        return self.status
+        # status used in the initial class version
+        # return self.status
 
 
 if __name__ == '__main__':
@@ -106,20 +138,35 @@ if __name__ == '__main__':
     ping = Pinger()
     ping.thread_count = 10  # default
 
+
     try:
-        sys.argv[1]
+        sys.argv[1], sys.argv[2]
     except IndexError:
-        print "usage is...python 0<thread_count <=100"
-        sys.exit()
+        print "usage is...\npython pinger.py thread_count xxx"
+        print "xxx=add - add new devices to db (full scan)"
+        print "xxx=del - remove not responding devices"
+        print "xxx=tst - test with list"
+        print "xxx='' - by default work with current db"
+        sys.exit(1)
     else:
         ping.thread_count = int(sys.argv[1])
-
-    ping.hosts = [
+    if sys.argv[2] == 'tst':
+        ping.hosts = [
         '10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.0', '10.0.0.255', '10.0.0.100',
-        'google.com', 'github.com', 'nonexisting', '127.0.1.2', '*not able to ping!*', '8.8.8.8'
-    ]
-    ping.hosts = repvpn.list([])
-
+        'google.com', 'github.com', 'nonexisting', '127.0.1.2', '*not able to ping!*', '8.8.8.8',
+        'yahoo.com', '123.123.123.123'
+        ]
+    elif sys.argv[2] == 'add':
+            ping.hosts = repvpn.list([])
+    else:
+        db = pymongo.Connection()["devices"]
+        vpn = db["repvpn"]
+        for ip in vpn.find():
+            ping.hosts.append(str(ip["address"]))
+    print "len of ping.hosts %s and thread-count is %s" % (len(ping.hosts),ping.thread_count)
+    #print ping.hosts
+    # sys.exit()
     ping.start()
-    print "Completed with thread_count %s\nalive: %s dead: %s" % (ping.thread_count, len(ping.status['alive']),
-                                                                  len(ping.status['dead']))
+    # status used in original class version, replaced by mongodb
+    # print "Completed with thread_count %s\nalive: %s dead: %s" % (ping.thread_count, len(ping.status['alive']),
+                                                                  #len(ping.status['dead']))
